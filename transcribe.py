@@ -24,6 +24,7 @@ import argparse
 import json
 import logging
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -85,10 +86,19 @@ LIVE_STEP_SECONDS = CONFIG["live"]["step_seconds"]
 LIVE_OVERLAP_SECONDS = CONFIG["live"]["overlap_seconds"]
 
 LLM_ENABLED = CONFIG["llm"]["enabled"]
-LLM_HOST = CONFIG["llm"]["host"]
+LLM_HOST = CONFIG["llm"]["host"].rstrip("/")
 LLM_MODEL = CONFIG["llm"]["model"]
 LLM_BATCH_SIZE = CONFIG["llm"]["batch_size"]
 LLM_TIMEOUT_SECONDS = CONFIG["llm"]["timeout_seconds"]
+LLM_AUTO_TITLE = CONFIG["llm"].get("auto_title", True)
+LLM_AUTO_START = CONFIG["llm"].get("auto_start", True)
+LLM_STARTUP_TIMEOUT_SECONDS = CONFIG["llm"].get("startup_timeout_seconds", 30)
+
+# Set exactly once by _ensure_llm_available() in main(). Both _restore_punctuation and
+# _generate_title check this (via _llm_usable_for()) instead of just their own config toggle, so
+# "is the LLM actually usable right now" always reflects this run's live Ollama reachability, not
+# just what's permanently set in config.toml.
+_llm_runtime_available = False
 
 
 def format_timestamp(seconds: float) -> str:
@@ -240,11 +250,15 @@ def _suggest_filename(segments: list[dict], max_words: int = 5) -> str | None:
     return "_".join(top_words) or None
 
 
+def _strip_invalid_filename_chars(text: str) -> str:
+    return "".join(c for c in text if c not in INVALID_FILENAME_CHARS).strip()
+
+
 def prompt_filename(default: str) -> str:
     entered = input(f"What do you want the file name to be? [{default}]: ").strip()
     if not entered:
         return default
-    cleaned = "".join(c for c in entered if c not in INVALID_FILENAME_CHARS).strip()
+    cleaned = _strip_invalid_filename_chars(entered)
     return cleaned or default
 
 
@@ -299,6 +313,86 @@ def _transcribe_and_align(audio, asr_model, align_cache: dict) -> list[dict]:
         ),
     )
     return result["segments"]
+
+
+def _ollama_is_up() -> bool:
+    """Health check: GET / (Ollama's lightweight liveness endpoint), 2s timeout."""
+    request = urllib.request.Request(f"{LLM_HOST}/")
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status == 200
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
+
+
+def _start_ollama_serve() -> None:
+    """Launches `ollama serve` detached so it outlives this process. Raises if `ollama` isn't
+    on PATH -- caller must catch."""
+    subprocess.Popen(
+        ["ollama", "serve"],
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _wait_for_ollama(timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if _ollama_is_up():
+            return True
+        time.sleep(0.75)
+    return False
+
+
+def _llm_usable_for(feature_enabled: bool) -> bool:
+    """feature's own config toggle AND Ollama reachable this run."""
+    return feature_enabled and _llm_runtime_available
+
+
+def _ensure_llm_available() -> None:
+    """Checks/starts Ollama once per run. Never raises -- any failure just disables LLM
+    features for this run, doesn't touch config.toml."""
+    global _llm_runtime_available
+    if _ollama_is_up():
+        _llm_runtime_available = True
+        return
+
+    if not LLM_AUTO_START:
+        print(
+            f"Note: Ollama isn't reachable at {LLM_HOST} and llm.auto_start is off in "
+            f"config.toml -- punctuation cleanup and title generation will be skipped this run."
+        )
+        _llm_runtime_available = False
+        return
+
+    answer = input("Ollama is not running. Do you want to start it? [y/N]: ").strip().lower()
+    if answer not in ("y", "yes"):
+        print("Okay -- punctuation cleanup and title generation will be skipped this run.")
+        _llm_runtime_available = False
+        return
+
+    print("Starting Ollama (ollama serve)...")
+    try:
+        _start_ollama_serve()
+    except (OSError, FileNotFoundError) as exc:
+        print(f"Note: couldn't launch 'ollama serve' ({exc}) -- LLM features skipped this run.")
+        _llm_runtime_available = False
+        return
+
+    started = _run_with_heartbeat(
+        "waiting for Ollama to start", lambda: _wait_for_ollama(LLM_STARTUP_TIMEOUT_SECONDS), interval=5.0
+    )
+    if started:
+        print("Ollama is up.")
+    else:
+        print(
+            f"Note: Ollama didn't come up within {LLM_STARTUP_TIMEOUT_SECONDS}s -- continuing "
+            f"without LLM features for this run (it may still be starting in the background; "
+            f"try again shortly, or run 'ollama serve' yourself in another terminal)."
+        )
+    _llm_runtime_available = started
 
 
 _PUNCTUATION_SYSTEM_PROMPT = (
@@ -366,7 +460,7 @@ def _restore_punctuation(label: str, segments: list[dict]) -> None:
     said, so a wrong word is worse than a missing comma -- each corrected line's word count is
     compared against the original, and any line that doesn't match keeps Whisper's original
     text instead of the LLM's rewrite."""
-    if not LLM_ENABLED or not segments:
+    if not _llm_usable_for(LLM_ENABLED) or not segments:
         return
     texts = [seg["text"].strip() for seg in segments]
     if not any(texts):
@@ -388,13 +482,71 @@ def _restore_punctuation(label: str, segments: list[dict]) -> None:
     if skipped:
         print(
             f"[{label}] Note: kept original punctuation for {skipped} segment(s) -- the LLM "
-            f"call failed, returned a mismatched response, or changed the word count (is Ollama "
-            f"running? try: ollama list)."
+            f"call failed, returned a mismatched response, or changed the word count (is "
+            f"{LLM_MODEL} pulled? try: ollama pull {LLM_MODEL})."
         )
 
 
-def _write_transcript(name: str, segments: list[dict]) -> None:
-    suggested = _suggest_filename(segments, SUGGESTED_FILENAME_WORDS) or name
+_TITLE_SYSTEM_PROMPT = (
+    "You will be given the text of a speech transcript. Read it and write ONE short, descriptive "
+    "title that reflects what the transcript actually is -- for example a meeting, a casual "
+    "conversation, gameplay commentary, a tutorial, an interview, etc. The title should be 5-8 "
+    "words, in Title Case, with no punctuation, no quotes, and no filler like 'Transcript of' or "
+    "'Video about'. Output ONLY the title text on a single line, nothing else."
+)
+
+
+def _slugify_title(title: str) -> str:
+    """Matches _suggest_filename()'s output style: lowercase_with_underscores."""
+    return re.sub(r"\s+", "_", title.lower()).strip("_")
+
+
+def _generate_title(segments: list[dict]) -> str | None:
+    """LLM title from transcript content. None on any failure -> caller falls back to
+    _suggest_filename()."""
+    if not _llm_usable_for(LLM_AUTO_TITLE) or not segments:
+        return None
+    full_text = " ".join(seg["text"].strip() for seg in segments if seg["text"].strip())
+    if len(full_text.split()) < 8:  # too short to be worth an LLM call
+        return None
+    excerpt = full_text[:4000]
+    payload = json.dumps(
+        {
+            "model": LLM_MODEL,
+            "messages": [
+                {"role": "system", "content": _TITLE_SYSTEM_PROMPT},
+                {"role": "user", "content": excerpt},
+            ],
+            "stream": False,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{LLM_HOST}/api/chat", data=payload, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=LLM_TIMEOUT_SECONDS) as response:
+            result = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+    content = result.get("message", {}).get("content", "").strip()
+    if not content:
+        return None
+    raw_title = content.splitlines()[0].strip().strip('"').strip("'")
+    cleaned = _strip_invalid_filename_chars(raw_title)
+    if not cleaned:
+        return None
+    return _slugify_title(cleaned)[:120]
+
+
+def _write_transcript(name: str, segments: list[dict], *, skip_llm_title: bool = False) -> None:
+    if skip_llm_title:
+        suggested = name  # --url: `name` is already yt-dlp's real title
+    else:
+        suggested = (
+            _generate_title(segments)
+            or _suggest_filename(segments, SUGGESTED_FILENAME_WORDS)
+            or name
+        )
     filename = prompt_filename(suggested)
     md_path = TRANSCRIPTS_DIR / f"{filename}.md"
     md_path.write_text(render_markdown(filename, segments), encoding="utf-8")
@@ -407,11 +559,11 @@ def _write_transcript(name: str, segments: list[dict]) -> None:
     print(f"[{name}] wrote " + " and ".join(str(p) for p in written))
 
 
-def run_pipeline(name: str, audio, asr_model, align_cache: dict) -> None:
+def run_pipeline(name: str, audio, asr_model, align_cache: dict, *, skip_llm_title: bool = False) -> None:
     print(f"[{name}] transcribing")
     segments = _transcribe_and_align(audio, asr_model, align_cache)
     _restore_punctuation(name, segments)
-    _write_transcript(name, segments)
+    _write_transcript(name, segments, skip_llm_title=skip_llm_title)
 
 
 def run_dual_pipeline(name: str, mic_audio, system_audio, asr_model, align_cache: dict) -> None:
@@ -430,10 +582,10 @@ def run_dual_pipeline(name: str, mic_audio, system_audio, asr_model, align_cache
     _write_transcript(name, merged)
 
 
-def transcribe_file(path: Path, asr_model, align_cache: dict) -> None:
+def transcribe_file(path: Path, asr_model, align_cache: dict, *, skip_llm_title: bool = False) -> None:
     print(f"[{path.name}] loading audio")
     audio = whisperx.load_audio(str(path))
-    run_pipeline(path.stem, audio, asr_model, align_cache)
+    run_pipeline(path.stem, audio, asr_model, align_cache, skip_llm_title=skip_llm_title)
     marker_path(path).touch()
 
 
@@ -505,6 +657,9 @@ def main() -> None:
         print_status()
         return
 
+    if LLM_ENABLED or LLM_AUTO_TITLE:
+        _ensure_llm_available()
+
     if args.live:
         model_name = _model_name_for("live", args.model)
         _warn_if_gpu_busy()
@@ -551,7 +706,7 @@ def main() -> None:
     if args.url:
         try:
             downloaded = fetch.download_audio(args.url, VIDEOS_DIR)
-            transcribe_file(downloaded, asr_model, align_cache)
+            transcribe_file(downloaded, asr_model, align_cache, skip_llm_title=True)
         except Exception as exc:
             print(f"[{args.url}] FAILED: {exc}", file=sys.stderr)
         return

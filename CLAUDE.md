@@ -21,16 +21,21 @@ Every mode writes a timestamped `.md` to `transcripts/`; a `.srt` is written alo
 label each block `(user)` (mic) or `(system)` (loopback) since there are two live audio sources;
 file/URL-based modes have only one source and stay unlabeled.
 
+Two optional local-LLM extras, both via Ollama, both toggleable in `config.toml`'s `[llm]` table and
+both fail-safe (never break a transcription run if Ollama isn't available): punctuation/capitalization
+cleanup (`llm.enabled`), and content-based transcript titling (`llm.auto_title`). See `_restore_punctuation`
+and `_generate_title` in Architecture below.
+
 ## Commands
 
 ```bash
 # `voice` is voice.bat: it resolves ffmpeg onto PATH, then runs transcribe.py, then returns
 # straight to the prompt (no "press any key" pause -- terminal scrollback already keeps the
 # output, so there's nothing to hold the window open for).
-# The repo root (C:\Users\yfais\Desktop\transcript) is on this machine's User PATH, so `voice`
-# (no .bat, no .\ prefix) works from any directory, in any shell -- an ollama-style CLI feel.
-# If it's ever not resolving (new machine, PATH not set up yet), fall back to `.\voice` from
-# inside the repo, or the full `voice.bat`; both always work regardless of PATH.
+# If you add the repo root to your User PATH, `voice` (no .bat, no .\ prefix) works from any
+# directory, in any shell -- an ollama-style CLI feel. If it's not resolving (PATH not set up,
+# or a fresh clone), fall back to `.\voice` from inside the repo, or the full `voice.bat`; both
+# always work regardless of PATH.
 voice                          # process every new file in videos/
 voice path\to\one.mp4          # transcribe a single file (unquoted spaces in the path are fine)
 voice --pick                   # interactively choose one pending video from videos/
@@ -89,9 +94,9 @@ There are **two Whisper models**, both loaded via the same WhisperX/faster-whisp
 config-level swap, not a second inference stack):
 
 - `model.quality.name` (`large-v3`, full model) — used for batch/`--pick`/single-file/`--record`/`--url`.
-  No real-time constraint on those paths, so accuracy wins. Checked against this machine's actual specs
-  (RTX 3080, 10GB VRAM) before picking it: `large-v3` uses ~5.5GB VRAM at float16, comfortably clear of
-  the 10GB ceiling, so there was no need to fall back to a smaller variant.
+  No real-time constraint on those paths, so accuracy wins. `large-v3` needs ~5.5GB VRAM at `float16` —
+  check yours with `nvidia-smi` before assuming it fits; on a smaller card, drop to a smaller Whisper
+  variant or switch `model.compute_type` to `int8`/`int8_float16`.
 - `model.fast.name` (`large-v3-turbo`) — used only for `--live`, where per-chunk latency is what makes it
   feel real-time.
 - `main()` picks between them via `_model_name_for(mode, override)`; `--model quality|fast` forces one
@@ -115,8 +120,8 @@ config-level swap, not a second inference stack):
   DVR clip that had appeared to hang for hours produced only 5 segments and re-ran in seconds once
   retested in isolation — nowhere near enough segments for the per-segment alignment loop above to
   explain it. Since DVR clips come from actively-played games, GPU contention from the still-running
-  game (sharing the same GPU as `large-v3`, e.g. an RTX 3080's 10GB VRAM) is the more likely
-  explanation for that specific case. `_warn_if_gpu_busy()` — called right before each
+  game (sharing the same GPU as `large-v3`) is the more likely explanation for that specific case.
+  `_warn_if_gpu_busy()` — called right before each
   `whisperx.load_model()` in `main()` — checks `torch.cuda.mem_get_info()` (whole-device memory, so
   it picks up usage from *other* processes, not just this one) and prints a warning if over half the
   GPU's memory is already in use, rather than failing silently slow. Best-effort: any exception is
@@ -152,13 +157,39 @@ config-level swap, not a second inference stack):
     a punctuation-stripped token count) is compared against the original before being accepted; a mismatch
     falls back to Whisper's original text for that one line rather than trusting a fabricated word. A
     transcript is a record of what was actually said, so a wrong word is worse than a missing comma.
-- **`_write_transcript(name, segments)`** — shared tail: `_suggest_filename(segments, ...)` guesses a
-  filename from the transcript's own content (see below) and falls back to `name` if that returns
-  `None`; `prompt_filename()` (interactive `input()`, defaulting to that suggestion if left blank)
-  lets the user accept it or type something else. Then `render_markdown()`, always written;
-  `render_srt()` is written too only when `WRITE_SRT` (`output.write_srt` in `config.toml`, default
-  `false`) is set. `winsound.MessageBeep()` (stdlib, no new dependency) signals completion audibly
-  so unattended jobs don't need to be watched.
+- **`_ensure_llm_available()`** — runs at most once per invocation, called from `main()` right after
+  the `--list` early return and before any mode branch, but only when `llm.enabled or llm.auto_title`
+  (so `--list`/`--list-devices`, or a config with both off, never touch Ollama at all). Health-checks
+  `GET {llm.host}/` (Ollama's documented liveness endpoint, distinct from the `/api/chat` calls the
+  two LLM features make below). If down and `llm.auto_start` is on, prompts `Ollama is not running.
+  Do you want to start it? [y/N]:` (plain `input()`, same convention as `pick_video()`/
+  `prompt_filename()`). `y` launches `ollama serve` detached (`subprocess.Popen` with
+  `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` so it outlives this process — verified by direct
+  testing that it survives after the launching process exits) and polls the health endpoint (wrapped
+  in `_run_with_heartbeat`) up to `llm.startup_timeout_seconds`. Any failure — declined, timeout,
+  `ollama` missing from PATH — sets the module-level `_llm_runtime_available` flag to `False` for
+  **this run only**; `config.toml`'s toggles are never touched. `_llm_usable_for(feature_enabled)`
+  (`feature_enabled and _llm_runtime_available`) is what `_restore_punctuation` and `_generate_title`
+  both check, so the "config toggle AND this run's Ollama state" combination lives in one place.
+- **`_generate_title(segments)`** — LLM-based title generation, gated by `llm.auto_title` (default
+  `true`, independent of `llm.enabled`'s punctuation gate) and `_llm_usable_for()`. One `/api/chat`
+  call (unlike `_restore_punctuation`'s numbered batches — a title needs the whole transcript's gist,
+  not a sliding window) over the first ~4000 characters of joined segment text, asking for a 5-8 word
+  Title Case description of what the content is — meeting, casual chat, gameplay commentary, etc. —
+  inferred by the model from the content itself, no separate classifier. Output is sanitized
+  (`_strip_invalid_filename_chars`, shared with `prompt_filename`) and slugified
+  (`_slugify_title`) to match `_suggest_filename`'s `snake_case` convention. Returns `None` on any
+  failure (unusable, too-short transcript, request error/timeout, empty response) — this is a new
+  first link prepended onto `_write_transcript`'s existing fallback chain, not a replacement for it.
+- **`_write_transcript(name, segments, *, skip_llm_title=False)`** — shared tail. `skip_llm_title=True`
+  (set only by the `--url` flow, since `fetch.download_audio()`'s returned path's `.stem` is already
+  yt-dlp's real pulled title) uses `name` directly with no suggestion logic at all. Otherwise:
+  `_generate_title(segments) or _suggest_filename(segments, ...) or name`. `prompt_filename()`
+  (interactive `input()`, defaulting to that suggestion if left blank) lets the user accept or
+  override it either way. Then `render_markdown()`, always written; `render_srt()` is written too
+  only when `WRITE_SRT` (`output.write_srt` in `config.toml`, default `false`) is set.
+  `winsound.MessageBeep()` (stdlib, no new dependency) signals completion audibly so unattended jobs
+  don't need to be watched.
 - **`_suggest_filename(segments, max_words)`** — offline, dependency-free content-based filename
   guesser: counts non-stopword words across the whole transcript (`_STOPWORDS` is a small built-in
   English filler-word list — "the", "um", "gonna", etc.), keeps the `max_words` most frequent
@@ -166,9 +197,10 @@ config-level swap, not a second inference stack):
   words by where they first appear in the transcript so the result reads like a short phrase (e.g.
   `wuthering_waves_boss_fight_build`) rather than a frequency-sorted word bag. Returns `None` on an
   empty/too-short transcript so the caller falls back to its own default.
-- **`transcribe_file(path, ...)`** — thin wrapper: `whisperx.load_audio()` shells out to the system
-  `ffmpeg` binary to decode (not PyAV — `faster-whisper`'s PyAV path is never reached since we always hand
-  it a pre-decoded array), then `run_pipeline()`, then marks `.done`.
+- **`transcribe_file(path, ..., skip_llm_title=False)`** — thin wrapper: `whisperx.load_audio()` shells
+  out to the system `ffmpeg` binary to decode (not PyAV — `faster-whisper`'s PyAV path is never reached
+  since we always hand it a pre-decoded array), then `run_pipeline(..., skip_llm_title=skip_llm_title)`,
+  then marks `.done`. `main()`'s `--url` branch is the only caller that passes `skip_llm_title=True`.
 
 ### Grouping and rendering
 
@@ -203,7 +235,7 @@ gating audio files out before was the extension allowlist.
 With `--pick`, `main()` calls `find_pending_videos()` then `pick_video()`, which prints a numbered list
 and reads a choice via `input()`. Plain `input()` was chosen over an arrow-key menu library
 (`questionary`/`prompt_toolkit`) because that stack requires a real attached Win32 console screen buffer
-and hard-errors under Git Bash/mintty and other non-conhost terminals on this machine.
+and hard-errors under Git Bash/mintty and other non-conhost terminals.
 
 ### `capture.py`: mic + system audio, kept separate, on two different backends
 
@@ -220,15 +252,18 @@ default).
   API (consistent with `--list-devices`' enumeration) but only to read off the device's friendly
   name — the actual stream is opened by ffmpeg, not PortAudio.
 
-**Why two backends**: PortAudio (which both PyAudioWPatch *and* a separately-tested vanilla
-`sounddevice` install are built on) fails to open this machine's mic under every host API it exposes
-(WASAPI, MME, WDM-KS alike) with generic `-9999`/`-9996` ("Unanticipated host error" / "Invalid
-device") errors — confirmed via direct testing that this is a PortAudio-specific incompatibility with
-that particular USB device, not a code bug, not a mute/permission/host-API-mismatch issue (all ruled
-out), and not an OS-level block: the exact same device opens fine through Windows' own recorder app and
-through `ffmpeg -f dshow`. Since `ffmpeg` is already a hard dependency of this project, mic capture goes
-through it instead of PortAudio, sidestepping the incompatibility rather than working around it inside
-PortAudio. `_start_ffmpeg_mic_capture()` asks ffmpeg to output already-mono, already-resampled-to-
+**Why two backends**: on the original dev machine, PortAudio (which both PyAudioWPatch *and* a
+separately-tested vanilla `sounddevice` install are built on) failed to open one specific USB mic
+(a HyperX QuadCast 2) under every host API it exposes (WASAPI, MME, WDM-KS alike) with generic
+`-9999`/`-9996` ("Unanticipated host error" / "Invalid device") errors — confirmed via direct testing
+this was a PortAudio-specific incompatibility with that particular device, not a code bug, mute/
+permission/host-API-mismatch issue, or OS-level block: the same device opened fine through Windows'
+own recorder app and through `ffmpeg -f dshow`. Rather than special-case around it, mic capture goes
+through `ffmpeg` **unconditionally, for every user** — `ffmpeg` is already a hard dependency of this
+project, it's simpler than juggling two capture paths, and it sidesteps this whole class of
+PortAudio/device incompatibility regardless of which mic you have. If your mic *does* work fine with
+PyAudioWPatch, you won't notice any difference; this just means you'll never hit the bug above either.
+`_start_ffmpeg_mic_capture()` asks ffmpeg to output already-mono, already-resampled-to-
 `record.sample_rate` raw `s16le` PCM directly (`-ac 1 -ar <rate> -f s16le -`), so `_StreamBuffer`'s own
 resample step is a no-op for the mic path; a background thread pumps ffmpeg's stdout into the same
 `_StreamBuffer.write()` the loopback callback uses. Stopping tries a graceful `q` over stdin first (what
@@ -292,29 +327,26 @@ fullwidth `？` in the real on-disk filename, but the un-swapped name is still w
 after the run, it diffs the directory for whatever new file with a matching extension actually
 appeared, rather than trying to replicate yt-dlp's own Windows filename sanitization rules.
 
-## Known environment gotchas (this machine)
+## Known environment gotchas
 
-- **Smart App Control is currently disabled** on this machine. It was blocking native DLLs pulled in by
-  `pip install`ed ML packages (PyAV, scipy) that have no Microsoft reputation yet — there's no per-app
-  exception mechanism, so it was either whack-a-mole per-DLL or off. If it gets re-enabled, expect
-  `ImportError: DLL load failed ... Application Control policy` on `whisperx`/`transformers` imports.
-- `torch` is pinned to `2.8.0+cu128` (installed explicitly from `download.pytorch.org/whl/cu128` *before*
-  `pip install whisperx`, since `whisperx` requires `torch~=2.8.0` and the default PyPI `torch` wheel on
-  Windows is CPU-only — installing whisperx first would silently lose GPU acceleration).
+Windows + NVIDIA-GPU specific gotchas encountered during development. The first two apply to anyone
+installing this on Windows; the rest were hit on the original dev machine and may or may not apply to
+yours — kept here in case you hit the same symptoms.
+
+- `torch` needs to be pinned to `2.8.0+cu128` (installed explicitly from `download.pytorch.org/whl/cu128`
+  *before* `pip install whisperx`, since `whisperx` requires `torch~=2.8.0` and the default PyPI `torch`
+  wheel on Windows is CPU-only — installing whisperx first would silently lose GPU acceleration).
 - The `torchcodec is not installed correctly` warning on every run is expected and harmless: pyannote's
   VAD step is fed a pre-decoded waveform dict (`whisperx/asr.py`), so it never actually needs torchcodec's
   file-decoding path.
-- **PortAudio (`pyaudiowpatch`, and a separately-tested vanilla `sounddevice` install) cannot open this
-  machine's mic (HyperX QuadCast 2) under any host API** — WASAPI, MME, and WDM-KS all fail with generic
-  `-9999`/`-9996` ("Unanticipated host error" / "Invalid device") errors, even with the mic confirmed
-  physically unmuted and every other input device on the machine (Realtek onboard mic, Stereo Mix, a
-  separate "Headset Microphone (HyperX Virtual Surround Sound)" device) opening fine through the same
-  PortAudio calls. Ruled out: code bug (two independent PortAudio bindings fail identically), mute button,
-  Windows' microphone privacy toggle (already Allow), host-API mismatch (mic and loopback already resolve
-  through the same WASAPI host API). **Root cause: a PortAudio-specific incompatibility with this
-  particular device** — the same mic opens and records fine through Windows' own recorder app and through
-  `ffmpeg -f dshow -i audio="Microphone (HyperX QuadCast 2)"` (verified: real, non-zero signal captured).
-  **Fix**: mic capture in `capture.py` goes through an `ffmpeg` subprocess instead of PyAudioWPatch (see
-  Architecture above); loopback keeps using PyAudioWPatch, which already worked. Verified end-to-end after
-  the fix: both the unbounded (record-mode) and bounded/rolling (live-mode) capture paths open and read
-  successfully with no errors.
+- **If Windows Smart App Control blocks native DLLs** pulled in by `pip install`ed ML packages (PyAV,
+  scipy have no Microsoft reputation yet), you'll see `ImportError: DLL load failed ... Application
+  Control policy` on `whisperx`/`transformers` imports. Disabling Smart App Control (there's no per-app
+  exception mechanism) is the workaround used during development.
+- **If PyAudioWPatch/PortAudio fails to open your mic** under every host API (WASAPI/MME/WDM-KS) with
+  generic `-9999`/`-9996` errors even though the mic works fine elsewhere (Windows' own recorder,
+  `ffmpeg -f dshow`) — this happened on the dev machine with one specific USB mic (HyperX QuadCast 2),
+  confirmed as a PortAudio-specific device incompatibility, not a code/permission/host-API issue. This
+  shouldn't actually affect you either way: mic capture already goes through `ffmpeg` unconditionally
+  for every user (see "Why two backends" above), specifically so this class of bug is sidestepped
+  regardless of which mic you have.

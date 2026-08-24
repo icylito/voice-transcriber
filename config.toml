@@ -43,9 +43,21 @@ overlap_seconds = 0.5  # trailing audio kept between windows so words at the bou
 # fix punctuation/capitalization/question marks. Requires Ollama running locally with the model
 # pulled: ollama pull qwen3:4b-instruct-2507-q4_K_M
 # Fails safe -- if Ollama isn't reachable, transcription still completes, just without this step.
-# Not used by --live mode (would add latency to a mode that's built to avoid it).
+# Not used by --live mode's rolling loop (would add latency to a mode that's built to avoid it) --
+# but --live's saved transcript still gets auto-titled below, since that happens once at the end.
 enabled = true
 host = "http://localhost:11434"
 model = "qwen3:4b-instruct-2507-q4_K_M"
 batch_size = 40          # segments sent per LLM call -- keeps requests within the model's context window
 timeout_seconds = 60
+
+# Generate a transcript title from its own content via the same local LLM, instead of the
+# offline word-frequency guess. Separate from `enabled` above -- punctuation cleanup and title
+# generation can be turned on/off independently. Applies to --record, --live, and batch/--pick/
+# single-file modes; --url downloads skip this entirely and use yt-dlp's real pulled title.
+auto_title = true
+
+# If Ollama isn't reachable when a run actually needs it (enabled or auto_title above is true),
+# offer to launch `ollama serve` automatically instead of just silently skipping the LLM steps.
+auto_start = true
+startup_timeout_seconds = 30  # how long to wait for it to come up before giving up on this run

@@ -4,3 +4,8 @@ __pycache__/
 videos/
 transcripts/
 .rendered
+
+# Personal working notes and a vendored Rust source tree pulled in for evaluation, neither
+# belongs in the repo.
+include.md
+asciinema-3.2.1/

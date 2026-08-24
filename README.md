@@ -9,11 +9,18 @@ Built for two audiences at once: `config.toml` for you, the actual code and `CLA
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](#install)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](#install)
 
-<video src="https://github.com/icylito/voice-transcriber/raw/master/Demo.mp4" controls width="700">
-</video>
+![A real terminal recording of voice --help, then a live transcription run](demo.gif)
 
-A real terminal recording: `voice --help`, then a live transcription run. Source audio:
-[demo_voiceover.wav](demo_voiceover.wav). Transcript it produced: [demo.md](demo.md).
+A real terminal recording, `voice --help` then a live transcription run. Source audio:
+[demo_voiceover.wav](demo_voiceover.wav). Full video with sound: [Demo.mp4](Demo.mp4).
+
+The transcript it produced:
+
+```markdown
+# demo
+
+**[00:00 - 00:02]** Hey, this is a short clip for the subtitle demo.
+```
 
 It runs on [WhisperX](https://github.com/m-bain/whisperX) by [m-bain](https://github.com/m-bain), which does the actual speech recognition (`faster-whisper`) and word-level alignment (wav2vec2). WhisperX installs as a standard pip dependency through requirements.txt, so no manual setup is needed. This tool wraps that engine with what WhisperX doesn't handle on its own: capturing a mic and system audio at once, pulling audio from a URL, running live, and cleaning up the output.
 

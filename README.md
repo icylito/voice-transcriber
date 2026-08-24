@@ -9,39 +9,15 @@ Built for two audiences at once: `config.toml` for you, the actual code and `CLA
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](#install)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](#install)
 
+<video src="https://github.com/icylito/voice-transcriber/raw/master/Demo.mp4" controls width="700">
+</video>
+
+A real terminal recording: `voice --help`, then a live transcription run. Source audio:
+[demo_voiceover.wav](demo_voiceover.wav). Transcript it produced: [demo.md](demo.md).
+
 It runs on [WhisperX](https://github.com/m-bain/whisperX) by [m-bain](https://github.com/m-bain), which does the actual speech recognition (`faster-whisper`) and word-level alignment (wav2vec2). WhisperX installs as a standard pip dependency through requirements.txt, so no manual setup is needed. This tool wraps that engine with what WhisperX doesn't handle on its own: capturing a mic and system audio at once, pulling audio from a URL, running live, and cleaning up the output.
 
 ![Terminal screenshot of transcribe.py's usage help text](image.png)
-
-### A new run
-
-This is captured output, not a mockup. `voice --url <a short speech>` with the quality model:
-
-```
-Loading Whisper model (large-v3) on cuda...
-[AddressonVietnamWarProtests.wav] loading audio
-[AddressonVietnamWarProtests] transcribing
-  transcribed 5 segments (language=en)
-loading alignment model for language=en
-[AddressonVietnamWarProtests] restoring punctuation for 14 segments via qwen3:4b-instruct-2507-q4_K_M...
-What do you want the file name to be? [AddressonVietnamWarProtests]:
-[AddressonVietnamWarProtests] wrote transcripts\AddressonVietnamWarProtests.md
-```
-
-And the transcript it wrote. Every block gets a timestamp range, punctuation already cleaned up:
-
-```markdown
-# AddressonVietnamWarProtests
-
-**[00:00 - 00:37]** Sometimes it appears that we're reaching a period when our senses and our
-minds will no longer respond to moderate stimulation. We seem to be approaching an age of the
-gross. Persuasion through speeches and books is too often discarded for disruptive demonstrations
-aimed at bludgeoning the unconvinced into action...
-
-**[00:38 - 01:09]** At the zenith of physical power and sensitivity overwhelm themselves with
-drugs and artificial stimulants. Subtlety is lost and fine distinctions based on acute reasoning
-are carelessly ignored in a headlong jump to a predetermined conclusion...
-```
 
 There's no graphical interface yet, so these are terminal captures instead of app screenshots. A GUI is a planned direction, not built. See `future_plan.md`.
 

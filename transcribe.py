@@ -35,11 +35,6 @@ import warnings
 import winsound
 from pathlib import Path
 
-# These are all known-harmless per CLAUDE.md's "Known environment gotchas": the torchcodec
-# UserWarning (VAD is fed a pre-decoded waveform, never needs torchcodec's file-decoding path),
-# the TF32 reproducibility notice, and INFO-level logging from whisperx/pyannote/pytorch_lightning
-# (language detection, VAD start, checkpoint-version upgrades). None of them indicate a problem,
-# so silence them here rather than showing 30-40 lines of expected noise on every run.
 warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 

@@ -2,6 +2,7 @@
 
 Transcribes video and audio into timestamped Markdown, entirely on your machine. Drop a file in, record your mic and system audio, paste a URL, or run it live while you talk. Nothing leaves your computer. No cloud API, no server.
 
+[![CI](https://github.com/icylito/voice-transcriber/actions/workflows/ci.yml/badge.svg)](https://github.com/icylito/voice-transcriber/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](#install)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](#install)
@@ -49,7 +50,7 @@ There's no graphical interface yet, so these are terminal captures instead of ap
 - `--url <URL>` pulls audio from a link through `yt-dlp` and transcribes it.
 - `--live` does the same dual capture, streamed to your console as you speak.
 - `--pick` lets you choose which pending video to transcribe.
-- Two optional extras run through a local LLM in Ollama: punctuation cleanup, and a title generated from what's actually in the recording instead of a generic filename. Both are on by default. If Ollama isn't running, transcription still finishes, it skips those two steps.
+- Two optional extras run through a local LLM in Ollama: punctuation cleanup, and a title generated from what's in the recording instead of a generic filename. Both are on by default. If Ollama isn't running, transcription still finishes, it skips those two steps.
 
 Every run writes a timestamped `.md` file to `transcripts/`. Turn on `.srt` output too if you want subtitles.
 
@@ -121,7 +122,7 @@ Each toggles independently. Turn both `enabled` and `auto_title` off and the too
 
 ## Benchmarks
 
-Two short public-domain speeches from the [Internet Archive](https://archive.org/details/Greatest_Speeches_of_the_20th_Century), run through `voice --url <clip>` end to end: download, model load, transcribe, align, punctuation cleanup. The command someone would actually type, not isolated inference time.
+Two short public-domain speeches from the [Internet Archive](https://archive.org/details/Greatest_Speeches_of_the_20th_Century), run through `voice --url <clip>` end to end: download, model load, transcribe, align, punctuation cleanup. The command someone would type, not isolated inference time.
 
 | Clip | Length | Model | Wall clock | Real-time factor |
 |---|---|---|---|---|
@@ -144,7 +145,7 @@ These numbers belong to the hardware below. GPU compute, VRAM, CPU, and disk spe
 
 ## Contributing
 
-There's no CI and no test suite yet, all of this gets verified by hand. If you're changing the pipeline (`transcribe.py`, `capture.py`, `live.py`, `fetch.py`), run the relevant mode end to end and check the transcript it produces before opening a PR. `CLAUDE.md` covers the architecture and the reasoning behind the less obvious decisions, read it first if you're touching capture or the LLM steps.
+CI (`.github/workflows/ci.yml`) runs syntax checks, `ruff`, config validation, and `pytest` on every push, but it only covers pure logic (`tests/`), not the actual GPU pipeline or real audio capture, since GitHub's runners don't have a GPU or a mic. If you're changing the pipeline (`transcribe.py`, `capture.py`, `live.py`, `fetch.py`), run the relevant mode end to end and check the transcript it produces before opening a PR, CI passing isn't enough on its own. `CLAUDE.md` covers the architecture and the reasoning behind the less obvious decisions, read it first if you're touching capture or the LLM steps.
 
 Open an issue for bugs or feature ideas. For anything Windows-audio related, include your device names from `voice --list-devices`.
 

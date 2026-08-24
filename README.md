@@ -2,6 +2,8 @@
 
 Transcribes video and audio into timestamped Markdown, entirely on your machine. Drop a file in, record your mic and system audio, paste a URL, or run it live while you talk. Nothing leaves your computer. No cloud API, no server.
 
+Built for two audiences at once: `config.toml` for you, the actual code and `CLAUDE.md` for an AI coding agent working on it directly.
+
 [![CI](https://github.com/icylito/voice-transcriber/actions/workflows/ci.yml/badge.svg)](https://github.com/icylito/voice-transcriber/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](#install)

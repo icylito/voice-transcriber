@@ -5,10 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A local transcription pipeline, entirely on-device via WhisperX (faster-whisper + wav2vec2 alignment) on
-an NVIDIA GPU — no cloud API, no server, no third-party diarization model. Four ways to feed it audio,
+an NVIDIA GPU, with no cloud API, no server, and no third-party diarization model. Four ways to feed it audio,
 all converging on the same transcribe → align → render pipeline:
 
-- Drop a video into `videos/` and run `transcribe.py` (or `--pick` one interactively) — batch mode.
+- Drop a video into `videos/` and run `transcribe.py` (or `--pick` one interactively). Batch mode.
 - `--record`: capture mic + system (loopback) audio to a buffer, transcribe on stop.
 - `--url URL`: `yt-dlp` downloads the audio, then it flows through the same path as a dropped video.
 - `--live`: the same mic+system capture, streamed in rolling chunks with incremental console output.
@@ -56,7 +56,7 @@ voice --help                   # list every command and flag
 ```
 
 **Note on PATH changes**: adding a directory to User PATH only affects *new* processes started after
-the change — an already-open terminal (or anything spawned from one) keeps its environment as of when
+the change. An already-open terminal (or anything spawned from one) keeps its environment as of when
 it launched. After changing PATH, open a genuinely new terminal window to see the update; a new tab or
 subprocess of an existing session won't pick it up.
 
@@ -118,7 +118,7 @@ config-level swap, not a second inference stack):
   coming is visible before alignment starts.
   **Confirmed by direct testing this isn't the only cause of apparent freezes**: a 2-minute gameplay
   DVR clip that had appeared to hang for hours produced only 5 segments and re-ran in seconds once
-  retested in isolation — nowhere near enough segments for the per-segment alignment loop above to
+  retested in isolation. Not nearly enough segments for the per-segment alignment loop above to
   explain it. Since DVR clips come from actively-played games, GPU contention from the still-running
   game (sharing the same GPU as `large-v3`) is the more likely explanation for that specific case.
   `_warn_if_gpu_busy()` — called right before each
@@ -255,7 +255,7 @@ default).
 **Why two backends**: on the original dev machine, PortAudio (which both PyAudioWPatch *and* a
 separately-tested vanilla `sounddevice` install are built on) failed to open one specific USB mic
 (a HyperX QuadCast 2) under every host API it exposes (WASAPI, MME, WDM-KS alike) with generic
-`-9999`/`-9996` ("Unanticipated host error" / "Invalid device") errors — confirmed via direct testing
+`-9999`/`-9996` ("Unanticipated host error" / "Invalid device") errors. Confirmed via direct testing
 this was a PortAudio-specific incompatibility with that particular device, not a code bug, mute/
 permission/host-API-mismatch issue, or OS-level block: the same device opened fine through Windows'
 own recorder app and through `ffmpeg -f dshow`. Rather than special-case around it, mic capture goes
@@ -329,7 +329,7 @@ appeared, rather than trying to replicate yt-dlp's own Windows filename sanitiza
 
 ## Known environment gotchas
 
-Windows + NVIDIA-GPU specific gotchas encountered during development. The first two apply to anyone
+Windows and NVIDIA GPU specific gotchas encountered during development. The first two apply to anyone
 installing this on Windows; the rest were hit on the original dev machine and may or may not apply to
 yours — kept here in case you hit the same symptoms.
 

@@ -1,9 +1,9 @@
-"""yt-dlp wrapper: download a URL's audio as a WAV file for the existing transcription pipeline.
+"""yt-dlp wrapper: download a URL's audio as a WAV file for the transcription pipeline.
 
-Downloads to a temp file rather than piping -- yt-dlp can't combine -x (audio extraction) with
+Downloads to a temp file rather than piping. yt-dlp can't combine -x (audio extraction) with
 -o - (stdout piping), and piping raw video into another process is fragile (throttling, seeking,
-format-detection issues), per yt-dlp issue #2627. This mirrors the temp-file pattern whisper.cpp's
-own yt-wsp.sh script uses: download, then hand a real file to the transcription pipeline.
+format-detection issues), per yt-dlp issue #2627. Mirrors the temp-file pattern whisper.cpp's
+own yt-wsp.sh script uses.
 """
 
 import subprocess
@@ -42,11 +42,10 @@ def download_audio(url: str, dest_dir: Path) -> Path:
     if printed_path.exists():
         return printed_path
 
-    # yt-dlp's --print after_move:filepath doesn't always match what actually lands on disk on
-    # Windows: a title containing a character that's illegal in Windows filenames (e.g. a plain
-    # "?") gets swapped for a lookalike (a fullwidth "？") when the file is actually written, but
-    # --print reports the un-swapped name. Rather than trying to replicate yt-dlp's own
-    # sanitization rules, just look at what new file(s) actually appeared in dest_dir.
+    # yt-dlp's --print after_move:filepath doesn't always match what lands on disk on Windows.
+    # A title with a character illegal in Windows filenames (e.g. "?") gets swapped for a
+    # lookalike ("？") in the real filename, but --print reports the un-swapped name. Instead of
+    # replicating yt-dlp's sanitization rules, check what new file appeared in dest_dir.
     after = set(dest_dir.iterdir())
     new_files = [p for p in (after - before) if p.suffix.lower() == printed_path.suffix.lower()]
     if len(new_files) == 1:

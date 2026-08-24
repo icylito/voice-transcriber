@@ -1,13 +1,10 @@
 """Live chunked transcription: rolling mic+system capture, transcribed in small overlapping
-windows so text streams to the console roughly every step_seconds, since Whisper-family models
-don't transcribe live by default. Each window is an independent transcribe() call (no shared
-state/conditioning across windows), so windows are reconciled after the fact by diffing each new
-window's text against the previous one and only emitting the non-overlapping remainder -- this
-also means no cross-window hallucination drift, since nothing is fed forward between calls.
+windows so text streams roughly every step_seconds. Each window is an independent transcribe()
+call, so overlap is reconciled by diffing each new window against the previous one and keeping
+only the new part. Nothing is fed forward between calls, so there's no hallucination drift.
 
-No word-level alignment here (unlike the batch/record/url pipeline) -- alignment's forced-alignment
-pass adds latency that defeats the point of a low-latency mode, and live captions don't need
-word-perfect timestamps, just readable streamed text plus a roughly-timed saved transcript.
+No word-level alignment here, unlike the batch/record/url pipeline. Forced alignment adds
+latency a low-latency mode can't afford, and live captions don't need word-perfect timestamps.
 """
 
 import difflib
@@ -30,12 +27,9 @@ def _new_text(prev_text: str, new_text: str) -> str:
 
 
 class _ConsoleWriter:
-    """Keeps live console output readable. Without this, a new line gets printed every single
-    step_seconds (1s by default) even mid-sentence, which reads as way too fast/jittery. Instead,
-    this only starts a new line when the speaker changes or a real pause/long block happens
-    (reusing the same pause_gap_seconds / max_block_seconds thresholds the saved transcript's
-    paragraph grouping uses) -- otherwise each new piece just extends the current line, like
-    normal streaming captions."""
+    """Governs when a new console line starts, reusing the saved transcript's
+    pause_gap_seconds/max_block_seconds thresholds. Without this, a new line prints every
+    step_seconds tick even mid-sentence."""
 
     def __init__(self, pause_gap_seconds: float, max_block_seconds: float):
         self._pause_gap_seconds = pause_gap_seconds

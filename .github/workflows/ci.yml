@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  check:
+    # transcribe.py imports winsound (Windows-only stdlib), so this can't run on ubuntu/macos.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Syntax check
+        run: python -m py_compile transcribe.py capture.py live.py fetch.py
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Validate config.toml
+        run: python scripts/check_config.py
+
+      - name: Run tests
+        run: pytest -v

@@ -1,0 +1,5 @@
+# Conservative rule set: catches real bugs (unused imports, undefined names, syntax errors)
+# without flagging patterns this codebase uses on purpose, like the broad except-Exception
+# blocks in transcribe.py's main() that keep one failed file from crashing a batch run.
+[lint]
+select = ["E9", "F"]

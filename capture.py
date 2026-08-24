@@ -1,20 +1,12 @@
-"""Mic + system-audio (WASAPI loopback) capture, kept as two separate streams.
+"""Mic + system-audio (WASAPI loopback) capture, kept as two separate streams so the pipeline
+can label segments (user) vs (system) instead of an anonymous blend.
 
-Both streams stay separate rather than being mixed down, so the transcription pipeline can
-label segments (user) vs (system) instead of transcribing an anonymous blend.
-
-The two streams use different backends:
-
-- **Loopback (system audio)** goes through PyAudioWPatch/WASAPI, which works reliably here.
-  Exclusive-mode streams can't loopback, so this opens a shared-mode input stream on the
-  loopback analogue of the default output device.
-- **Mic** goes through an `ffmpeg` subprocess (DirectShow input), not PyAudioWPatch. Confirmed by
-  direct testing: PortAudio (both PyAudioWPatch and a separate vanilla `sounddevice` install) fails
-  to open this machine's USB mic under every host API (WASAPI/MME/WDM-KS) with generic "Invalid
-  device"/"Unanticipated host error" codes, even though the exact same device opens fine through
-  Windows' own recorder and through `ffmpeg -f dshow`. Since `ffmpeg` is already a hard dependency
-  of this project, routing mic capture through it sidesteps the PortAudio-specific incompatibility
-  entirely rather than working around it inside PortAudio.
+Loopback goes through PyAudioWPatch/WASAPI: exclusive-mode streams can't loopback, so this opens
+a shared-mode input on the loopback analogue of the default output device. Mic goes through an
+`ffmpeg` subprocess instead, since PortAudio (PyAudioWPatch and a separate vanilla `sounddevice`
+install) fails to open this machine's USB mic under every host API, while the same device opens
+fine through Windows' own recorder and through `ffmpeg -f dshow`. ffmpeg is already a hard
+dependency here, so routing mic capture through it sidesteps the incompatibility entirely.
 """
 
 import subprocess
@@ -134,9 +126,9 @@ def _resolve_mic(p: pyaudio.PyAudio, device_index: int) -> dict:
     if device_index == -1:
         # Use the WASAPI-scoped default, not get_default_input_device_info() (which can resolve
         # to a different host API's duplicate device entry for the same hardware, e.g. MME/
-        # DirectSound). Only the friendly name is actually used (ffmpeg's dshow input takes a
-        # device name, not a PortAudio index) but resolving through WASAPI keeps this consistent
-        # with --list-devices, which enumerates via the same host API.
+        # DirectSound). Only the friendly name is used here (ffmpeg's dshow input takes a device
+        # name, not a PortAudio index), but resolving through WASAPI keeps this consistent with
+        # --list-devices, which enumerates via the same host API.
         wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
         return p.get_device_info_by_index(wasapi_info["defaultInputDevice"])
     return p.get_device_info_by_index(device_index)

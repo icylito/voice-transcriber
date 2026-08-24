@@ -1,23 +1,44 @@
-![Terminal screenshot of transcribe.py's usage help text](image.png)
-
 # voice-transcriber
 
 Transcribes video and audio into timestamped Markdown, entirely on your machine. Drop a file in, record your mic and system audio, paste a URL, or run it live while you talk. Nothing leaves your computer. No cloud API, no server.
 
-[![License](https://img.shields.io/github/license/icylito/voice-transcriber)](LICENSE)
+[![License](https://img.shields.io/badge/license-BSD--2--Clause-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](#install)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](#install)
 
-It runs on [WhisperX](https://github.com/m-bain/whisperX) by [m-bain](https://github.com/m-bain), which does the actual speech recognition (`faster-whisper`) and word-level alignment (wav2vec2). This tool wraps that engine with what WhisperX doesn't handle on its own: capturing a mic and system audio at once, pulling audio from a URL, running live, and cleaning up the output.
+It runs on [WhisperX](https://github.com/m-bain/whisperX) by [m-bain](https://github.com/m-bain), which does the actual speech recognition (`faster-whisper`) and word-level alignment (wav2vec2). WhisperX installs as a standard pip dependency through requirements.txt, so no manual setup is needed. This tool wraps that engine with what WhisperX doesn't handle on its own: capturing a mic and system audio at once, pulling audio from a URL, running live, and cleaning up the output.
 
-### See it work
+![Terminal screenshot of transcribe.py's usage help text](image.png)
 
-A real terminal recording, `voice --help` then a transcription run:
+### A new run
 
-<video src="https://github.com/icylito/voice-transcriber/raw/master/Demo.mp4" controls width="700">
-</video>
+This is captured output, not a mockup. `voice --url <a short speech>` with the quality model:
 
-Source audio: [demo_voiceover.wav](demo_voiceover.wav). Transcript it produced: [demo.md](demo.md).
+```
+Loading Whisper model (large-v3) on cuda...
+[AddressonVietnamWarProtests.wav] loading audio
+[AddressonVietnamWarProtests] transcribing
+  transcribed 5 segments (language=en)
+loading alignment model for language=en
+[AddressonVietnamWarProtests] restoring punctuation for 14 segments via qwen3:4b-instruct-2507-q4_K_M...
+What do you want the file name to be? [AddressonVietnamWarProtests]:
+[AddressonVietnamWarProtests] wrote transcripts\AddressonVietnamWarProtests.md
+```
+
+And the transcript it wrote. Every block gets a timestamp range, punctuation already cleaned up:
+
+```markdown
+# AddressonVietnamWarProtests
+
+**[00:00 - 00:37]** Sometimes it appears that we're reaching a period when our senses and our
+minds will no longer respond to moderate stimulation. We seem to be approaching an age of the
+gross. Persuasion through speeches and books is too often discarded for disruptive demonstrations
+aimed at bludgeoning the unconvinced into action...
+
+**[00:38 - 01:09]** At the zenith of physical power and sensitivity overwhelm themselves with
+drugs and artificial stimulants. Subtlety is lost and fine distinctions based on acute reasoning
+are carelessly ignored in a headlong jump to a predetermined conclusion...
+```
 
 There's no graphical interface yet, so these are terminal captures instead of app screenshots. A GUI is a planned direction, not built. See `future_plan.md`.
 
@@ -28,7 +49,7 @@ There's no graphical interface yet, so these are terminal captures instead of ap
 - `--url <URL>` pulls audio from a link through `yt-dlp` and transcribes it.
 - `--live` does the same dual capture, streamed to your console as you speak.
 - `--pick` lets you choose which pending video to transcribe.
-- Two optional extras run through a local LLM in Ollama: punctuation cleanup, and a title generated from what's in the recording instead of a generic filename. Both are on by default. If Ollama isn't running, transcription still finishes, it skips those two steps.
+- Two optional extras run through a local LLM in Ollama: punctuation cleanup, and a title generated from what's actually in the recording instead of a generic filename. Both are on by default. If Ollama isn't running, transcription still finishes, it skips those two steps.
 
 Every run writes a timestamped `.md` file to `transcripts/`. Turn on `.srt` output too if you want subtitles.
 
@@ -100,7 +121,7 @@ Each toggles independently. Turn both `enabled` and `auto_title` off and the too
 
 ## Benchmarks
 
-Two short public-domain speeches from the [Internet Archive](https://archive.org/details/Greatest_Speeches_of_the_20th_Century), run through `voice --url <clip>` end to end: download, model load, transcribe, align, punctuation cleanup. The command someone would type, not isolated inference time.
+Two short public-domain speeches from the [Internet Archive](https://archive.org/details/Greatest_Speeches_of_the_20th_Century), run through `voice --url <clip>` end to end: download, model load, transcribe, align, punctuation cleanup. The command someone would actually type, not isolated inference time.
 
 | Clip | Length | Model | Wall clock | Real-time factor |
 |---|---|---|---|---|
@@ -133,4 +154,4 @@ BSD 2-Clause, see [LICENSE](LICENSE).
 
 This project runs on [WhisperX](https://github.com/m-bain/whisperX), also BSD 2-Clause, copyright Max Bain. Full credit to that project for the speech recognition and alignment engine underneath this tool.
 
-Claude wrote the implementation. [Icylito](https://github.com/icylito) designed it, tested it, and fixed what broke.
+This project was fully written by Claude [www.claudeai.com](https://claude.ai/) 

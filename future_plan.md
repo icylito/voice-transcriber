@@ -28,10 +28,10 @@ real, discoverable UI instead of a text file the user has to hand-edit:
 - **Everything else already in `config.toml`** — pause/block grouping thresholds
   (`pause_gap_seconds`, `max_block_seconds`), batch size, compute type, device, language,
   live-mode chunk/step/overlap timing — exposed as real settings UI, not text-file fields.
-- **GUI Looks** basically going to have a minimal ui with 1 main view:
+- **GUI look** will be minimal with 1 main view:
   1. 1 button for record/stop (after record was pressed) the other is for live recording 
   2. a voice wave bar only appearing as the voice is being recorded to help the user know 
-    there is an actual input. Once the recording is doen it'd show the transcript in the app itself
+    there is an actual input. Once the recording is done it'd show the transcript in the app itself
     and it'll have a copy saved in the transcript/transcripts folder 
   3. live recording basically any input taken:
     (user)

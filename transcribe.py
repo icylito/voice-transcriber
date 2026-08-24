@@ -89,10 +89,7 @@ LLM_AUTO_TITLE = CONFIG["llm"].get("auto_title", True)
 LLM_AUTO_START = CONFIG["llm"].get("auto_start", True)
 LLM_STARTUP_TIMEOUT_SECONDS = CONFIG["llm"].get("startup_timeout_seconds", 30)
 
-# Set exactly once by _ensure_llm_available() in main(). Both _restore_punctuation and
-# _generate_title check this (via _llm_usable_for()) instead of just their own config toggle, so
-# "is the LLM actually usable right now" always reflects this run's live Ollama reachability, not
-# just what's permanently set in config.toml.
+# Set once by _ensure_llm_available() in main(), reflects this run's live Ollama reachability.
 _llm_runtime_available = False
 
 
@@ -114,10 +111,8 @@ def format_srt_timestamp(seconds: float) -> str:
 
 
 def group_by_pause(segments: list[dict], gap_seconds: float, max_block_seconds: float) -> list[dict]:
-    """Merge consecutive same-speaker segments into one block until a silence gap is crossed, the
-    block has been running long enough that it's worth breaking anyway (conversational audio with
-    quick back-and-forth replies may never produce a real pause), or the speaker changes (mic vs.
-    system audio, when segments are tagged)."""
+    """Merges consecutive same-speaker segments into a block. Breaks on a silence gap, the block
+    running too long, or a speaker change."""
     groups: list[dict] = []
     for seg in segments:
         text = seg["text"].strip()
@@ -158,16 +153,15 @@ def render_srt(segments: list[dict]) -> str:
 
 
 def _resolve_file_path(path: Path) -> Path:
-    """Windows Explorer hides known file extensions by default, so a path typed or pasted by
-    hand (e.g. '...DVR' instead of the real '...DVR.mp4') is a common typo. If the given path
-    doesn't exist as-is, try appending each known extension before giving up -- the raw ffmpeg
-    'No such file or directory' error this would otherwise produce doesn't explain why."""
+    """Handles a common Windows typo: Explorer hides known file extensions, so a path typed by
+    hand (e.g. '...DVR' instead of the real '...DVR.mp4') often misses its real one. Tries each
+    known extension before giving up."""
     if path.exists():
         return path
     for ext in sorted(VIDEO_EXTENSIONS):
         candidate = path.with_name(path.name + ext)
         if candidate.exists():
-            print(f"Note: '{path.name}' not found -- using '{candidate.name}' instead "
+            print(f"Note: '{path.name}' not found. Using '{candidate.name}' instead "
                   f"(Windows often hides file extensions).")
             return candidate
     return path
@@ -198,9 +192,8 @@ def print_status() -> None:
         print(f"  [{status}] {path.name}")
 
 
-# Common English filler/function words, excluded when guessing a filename from transcript
-# content -- otherwise "the", "so", "um" etc. would dominate the word-frequency count instead of
-# whatever the recording is actually about.
+# Filler/function words excluded from the filename guess, so "the", "so", "um" etc. don't
+# dominate the word count instead of what the recording is about.
 _STOPWORDS = {
     "a", "an", "the", "and", "or", "but", "if", "then", "so", "because", "as", "of", "at", "by",
     "for", "with", "about", "against", "between", "into", "through", "during", "before", "after",
@@ -221,12 +214,9 @@ _STOPWORDS = {
 
 
 def _suggest_filename(segments: list[dict], max_words: int = 5) -> str | None:
-    """Best-effort filename guessed from what was actually said: count non-filler words across
-    the whole transcript, keep the most frequent ones, then output them in the order they first
-    appear (not frequency order) so the result reads like a short phrase, e.g.
-    'wuthering_waves_boss_fight_build', instead of a shuffled word bag. Returns None if the
-    transcript is too short/empty to produce anything meaningful, so the caller can fall back to
-    its own default name."""
+    """Guesses a filename from the transcript: counts non-filler words, keeps the most frequent,
+    then orders them by first appearance so it reads like a phrase (e.g.
+    'wuthering_waves_boss_fight_build'). Returns None if the transcript is too short."""
     counts: dict[str, int] = {}
     first_seen: dict[str, int] = {}
     position = 0
@@ -275,11 +265,8 @@ def _load_align_model(language: str, align_cache: dict):
 
 
 def _run_with_heartbeat(label: str, func, interval: float = 20.0):
-    """Runs func() while printing a heartbeat every `interval` seconds. Some steps (notably
-    whisperx's forced-alignment pass, which processes segments one at a time on the GPU with no
-    progress output of its own) can legitimately run for a long time in total silence -- easy to
-    mistake for a hang, especially on dialogue-heavy audio (games, anime) with thousands of short
-    segments. This doesn't make it faster, just makes it obvious it's still alive."""
+    """Prints a heartbeat every `interval` seconds while func() runs, so a long silent step
+    (like forced alignment) doesn't read as a hang."""
     done = threading.Event()
     start = time.monotonic()
 
@@ -299,8 +286,8 @@ def _transcribe_and_align(audio, asr_model, align_cache: dict) -> list[dict]:
     segment_count = len(result["segments"])
     print(f"  transcribed {segment_count} segments (language={result['language']})")
     align_model, align_metadata = _load_align_model(result["language"], align_cache)
-    print(f"  aligning {segment_count} segments -- this happens one at a time, so audio with "
-          f"lots of short lines (dialogue-heavy games/anime, etc.) can take a while")
+    print(f"  aligning {segment_count} segments, one at a time. Lots of short lines "
+          f"(dialogue-heavy games/anime, etc.) can take a while.")
     result = _run_with_heartbeat(
         "aligning",
         lambda: whisperx.align(
@@ -322,7 +309,7 @@ def _ollama_is_up() -> bool:
 
 def _start_ollama_serve() -> None:
     """Launches `ollama serve` detached so it outlives this process. Raises if `ollama` isn't
-    on PATH -- caller must catch."""
+    on PATH, caller must catch."""
     subprocess.Popen(
         ["ollama", "serve"],
         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
@@ -347,8 +334,8 @@ def _llm_usable_for(feature_enabled: bool) -> bool:
 
 
 def _ensure_llm_available() -> None:
-    """Checks/starts Ollama once per run. Never raises -- any failure just disables LLM
-    features for this run, doesn't touch config.toml."""
+    """Checks/starts Ollama once per run. Never raises, any failure disables LLM features for
+    this run without touching config.toml."""
     global _llm_runtime_available
     if _ollama_is_up():
         _llm_runtime_available = True
@@ -357,14 +344,14 @@ def _ensure_llm_available() -> None:
     if not LLM_AUTO_START:
         print(
             f"Note: Ollama isn't reachable at {LLM_HOST} and llm.auto_start is off in "
-            f"config.toml -- punctuation cleanup and title generation will be skipped this run."
+            f"config.toml. Punctuation cleanup and title generation will be skipped this run."
         )
         _llm_runtime_available = False
         return
 
     answer = input("Ollama is not running. Do you want to start it? [y/N]: ").strip().lower()
     if answer not in ("y", "yes"):
-        print("Okay -- punctuation cleanup and title generation will be skipped this run.")
+        print("Okay. Punctuation cleanup and title generation will be skipped this run.")
         _llm_runtime_available = False
         return
 
@@ -372,7 +359,7 @@ def _ensure_llm_available() -> None:
     try:
         _start_ollama_serve()
     except (OSError, FileNotFoundError) as exc:
-        print(f"Note: couldn't launch 'ollama serve' ({exc}) -- LLM features skipped this run.")
+        print(f"Note: couldn't launch 'ollama serve' ({exc}). LLM features skipped this run.")
         _llm_runtime_available = False
         return
 
@@ -383,8 +370,8 @@ def _ensure_llm_available() -> None:
         print("Ollama is up.")
     else:
         print(
-            f"Note: Ollama didn't come up within {LLM_STARTUP_TIMEOUT_SECONDS}s -- continuing "
-            f"without LLM features for this run (it may still be starting in the background; "
+            f"Note: Ollama didn't come up within {LLM_STARTUP_TIMEOUT_SECONDS}s. Continuing "
+            f"without LLM features for this run (it may still be starting in the background, "
             f"try again shortly, or run 'ollama serve' yourself in another terminal)."
         )
     _llm_runtime_available = started
@@ -400,11 +387,8 @@ _PUNCTUATION_SYSTEM_PROMPT = (
 
 
 def _llm_punctuate_batch(lines: list[str]) -> list[str] | None:
-    """Sends one numbered batch of raw segment texts to the local LLM (via Ollama's /api/chat)
-    and returns the corrected lines in the same order. Returns None on any failure (Ollama not
-    running, timeout, bad response, or a line count that doesn't match what was sent) so the
-    caller can fall back to leaving that batch's original Whisper text untouched -- this is a
-    nice-to-have polish step, never something the pipeline should hard-fail on."""
+    """Sends one numbered batch to the local LLM and returns corrected lines in order. Returns
+    None on any failure, so the caller keeps the original text instead."""
     numbered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines, start=1))
     payload = json.dumps(
         {
@@ -440,21 +424,12 @@ def _word_count(text: str) -> int:
 
 
 def _restore_punctuation(label: str, segments: list[dict]) -> None:
-    """Best-effort punctuation/capitalization cleanup via a local LLM, opt-in via llm.enabled in
-    config.toml (see CLAUDE.md). Mutates segment texts in place. Segments are sent in batches of
-    LLM_BATCH_SIZE rather than one at a time -- dialogue-heavy audio can produce hundreds/
-    thousands of short segments (see the alignment note above), and one HTTP round-trip per
-    segment would make that dramatically slower than it needs to be, plus a giant single request
-    risks overflowing the model's context window. Not used by --live mode: that path already
-    skips forced alignment specifically to stay low-latency, and a synchronous LLM call per
-    rolling window would defeat the same goal.
+    """Punctuation cleanup via a local LLM, opt-in via llm.enabled. Mutates segment texts in
+    place. Batches segments (LLM_BATCH_SIZE) instead of one call each, for speed and to stay
+    within context. Not used by --live, which skips alignment too for latency.
 
-    Even with an explicit "don't add/remove words" instruction, small LLMs occasionally slip in
-    a connector word (confirmed by direct testing: "living in Seattle" once came back as "and
-    living in Seattle"). A transcript is supposed to be a faithful record of what was actually
-    said, so a wrong word is worse than a missing comma -- each corrected line's word count is
-    compared against the original, and any line that doesn't match keeps Whisper's original
-    text instead of the LLM's rewrite."""
+    Each corrected line's word count is checked against the original, since small LLMs
+    sometimes add a stray word even when told not to. A mismatch keeps the original text."""
     if not _llm_usable_for(LLM_ENABLED) or not segments:
         return
     texts = [seg["text"].strip() for seg in segments]
@@ -476,7 +451,7 @@ def _restore_punctuation(label: str, segments: list[dict]) -> None:
             segments[start + offset]["text"] = text
     if skipped:
         print(
-            f"[{label}] Note: kept original punctuation for {skipped} segment(s) -- the LLM "
+            f"[{label}] Note: kept original punctuation for {skipped} segment(s). The LLM "
             f"call failed, returned a mismatched response, or changed the word count (is "
             f"{LLM_MODEL} pulled? try: ollama pull {LLM_MODEL})."
         )
@@ -484,7 +459,7 @@ def _restore_punctuation(label: str, segments: list[dict]) -> None:
 
 _TITLE_SYSTEM_PROMPT = (
     "You will be given the text of a speech transcript. Read it and write ONE short, descriptive "
-    "title that reflects what the transcript actually is -- for example a meeting, a casual "
+    "title that reflects what the transcript is, for example a meeting, a casual "
     "conversation, gameplay commentary, a tutorial, an interview, etc. The title should be 5-8 "
     "words, in Title Case, with no punctuation, no quotes, and no filler like 'Transcript of' or "
     "'Video about'. Output ONLY the title text on a single line, nothing else."
@@ -585,11 +560,9 @@ def transcribe_file(path: Path, asr_model, align_cache: dict, *, skip_llm_title:
 
 
 def _warn_if_gpu_busy() -> None:
-    """A large chunk of GPU/VRAM already in use by another process (most plausibly a game still
-    running, since DVR clips come straight from actively playing one) can make transcription and
-    especially alignment run dramatically slower than usual without any error -- just silence.
-    torch.cuda.mem_get_info() reports whole-device memory, not just this process's share, so it
-    picks up contention from *other* processes too. Best-effort only: never blocks a run."""
+    """A busy GPU (often a game still running) can make transcription and alignment run much
+    slower with no error shown. Checks whole-device memory, so it also catches other processes.
+    Best-effort only, never blocks a run."""
     if DEVICE != "cuda":
         return
     try:
@@ -599,7 +572,7 @@ def _warn_if_gpu_busy() -> None:
         if used_gb / total_gb > 0.5:
             print(
                 f"Note: {used_gb:.1f}/{total_gb:.1f} GB of GPU memory is already in use by other "
-                f"processes (e.g. a game still running) -- transcription and alignment can run "
+                f"processes (e.g. a game still running). Transcription and alignment can run "
                 f"much slower than usual while sharing the GPU under load."
             )
     except Exception:
@@ -622,7 +595,7 @@ def main() -> None:
         "file",
         nargs="*",
         help="Transcribe a single file instead of scanning videos/ "
-        "(spaces in the path don't need quoting -- unquoted words are auto-joined)",
+        "(spaces in the path don't need quoting, unquoted words are auto-joined)",
     )
     parser.add_argument(
         "--pick", action="store_true", help="Interactively choose one pending video from videos/ to transcribe"

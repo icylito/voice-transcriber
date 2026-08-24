@@ -155,4 +155,4 @@ BSD 2-Clause, see [LICENSE](LICENSE).
 
 This project runs on [WhisperX](https://github.com/m-bain/whisperX), also BSD 2-Clause, copyright Max Bain. Full credit to that project for the speech recognition and alignment engine underneath this tool.
 
-This project was fully written by Claude [www.claudeai.com](https://claude.ai/) 
+This project was fully written by Claude [claude.ai](https://claude.ai/)

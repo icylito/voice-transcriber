@@ -1,0 +1,51 @@
+# Settings for transcribe.py. Edit values here; no code changes needed.
+
+[paths]
+videos_dir = "videos"           # drop video OR audio files here
+transcripts_dir = "transcripts" # .md output lands here
+
+[model]
+device = "cuda"           # "cuda" for NVIDIA GPU, "cpu" otherwise
+compute_type = "float16"  # "float16"/"int8_float16" on GPU, "int8" on CPU
+batch_size = 16           # lower this if you hit GPU out-of-memory errors
+language = ""             # force a language code (e.g. "en"); empty = auto-detect
+
+[model.quality]
+name = "large-v3"         # used for batch scan / --pick / single-file / --record / --url (accuracy-first)
+
+[model.fast]
+name = "large-v3-turbo"   # used for --live only (latency-first)
+
+[output]
+# Video AND audio extensions -- anything ffmpeg can decode is fair game to drop in videos/.
+video_extensions = [
+    ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".wmv", ".flv",  # video
+    ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".wma", ".opus", # audio
+]
+pause_gap_seconds = 4.5  # merge speech into one paragraph until a silence gap this long occurs
+max_block_seconds = 45   # force a new paragraph after this long even without a real pause
+                          # (conversational back-and-forth can go a long time with no 4-5s gap)
+write_srt = false        # also write a .srt subtitle file alongside the .md -- off by default
+suggested_filename_words = 5  # words used to auto-suggest a transcript filename from its content
+
+[record]
+sample_rate = 16000   # mic+loopback are each resampled to this rate (matches what Whisper wants)
+mic_device = -1        # device index from --list-devices; -1 = system default input
+loopback_device = -1   # device index from --list-devices; -1 = system default WASAPI loopback
+
+[live]
+chunk_seconds = 4.0    # rolling window length fed to the model each step
+step_seconds = 1.0     # how often a new inference runs
+overlap_seconds = 0.5  # trailing audio kept between windows so words at the boundary aren't clipped
+
+[llm]
+# Optional cleanup pass after transcription: sends segment text to a local LLM (via Ollama) to
+# fix punctuation/capitalization/question marks. Requires Ollama running locally with the model
+# pulled: ollama pull qwen3:4b-instruct-2507-q4_K_M
+# Fails safe -- if Ollama isn't reachable, transcription still completes, just without this step.
+# Not used by --live mode (would add latency to a mode that's built to avoid it).
+enabled = true
+host = "http://localhost:11434"
+model = "qwen3:4b-instruct-2507-q4_K_M"
+batch_size = 40          # segments sent per LLM call -- keeps requests within the model's context window
+timeout_seconds = 60
